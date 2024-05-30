@@ -12,7 +12,7 @@ const csvArr = csvData
 let csv = csvArr.map((line) => ({
   name: line[1].trim().replaceAll(" ", "").toLowerCase(),
   github: "https://" + line[2].trim(),
-})).slice(0, 4);
+})).slice(0, 16);
 
 const db = sql.open('postgres', 'postgresql://pemasak:Memet-Skibidi-Gyatt-69@localhost:5439/pemasak');
 
@@ -22,8 +22,8 @@ export let options = {
   scenarios: {
     build: {
       executor: "shared-iterations",
-      vus: 4,
-      iterations: 4,
+      vus: 1,
+      iterations: 2,
       maxDuration: "60m",
     },
   },

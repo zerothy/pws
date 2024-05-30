@@ -34,8 +34,8 @@ export let options = {
 
 const { username, password, domain } = {
   "domain": "http://localhost:8080",
-  "username": "adrian.ardizza",
-  "password": "ardizza123",
+  "username": "<username>",
+  "password": "<password>",
 };
 
 export function setup() {
