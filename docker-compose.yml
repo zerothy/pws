@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   db:
     container_name: db-pemasak
@@ -27,7 +26,7 @@ services:
   atlas:
     container_name: atlas-pemasak
     restart: no
-    image: arigaio/atlas:0.14.2
+    image: arigaio/atlas:0.36.0
     volumes:
       - ./migrations:/migrations
     depends_on:
