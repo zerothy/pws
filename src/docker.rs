@@ -335,6 +335,11 @@ pub async fn build_docker(
                         name: Some(RestartPolicyNameEnum::ON_FAILURE),
                         ..Default::default()
                     }),
+                    // Database resource limits - PostgreSQL needs less CPU but similar memory
+                    memory: Some(256 * 1024 * 1024),        // 256MB memory limit
+                    memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
+                    cpu_quota: Some(25000),                  // 0.25 CPU (25% - DB less CPU intensive)
+                    cpu_period: Some(100000),                // Standard 100ms period
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -463,6 +468,11 @@ pub async fn build_docker(
                                 name: Some(RestartPolicyNameEnum::ON_FAILURE),
                                 ..Default::default()
                             }),
+                            // Database resource limits - PostgreSQL recreate case
+                            memory: Some(256 * 1024 * 1024),        // 256MB memory limit
+                            memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
+                            cpu_quota: Some(25000),                  // 0.25 CPU (25% - DB less CPU intensive)
+                            cpu_period: Some(100000),                // Standard 100ms period
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -582,6 +592,11 @@ pub async fn build_docker(
                 name: Some(RestartPolicyNameEnum::ON_FAILURE),
                 ..Default::default()
             }),
+            // Resource limits for 200+ students - prevent resource abuse
+            memory: Some(256 * 1024 * 1024),        // 256MB memory limit
+            memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
+            cpu_quota: Some(50000),                  // 0.5 CPU (50% of 100000 period)
+            cpu_period: Some(100000),                // Standard 100ms period
             ..Default::default()
         }),
         ..Default::default()
@@ -622,6 +637,11 @@ pub async fn build_docker(
                         name: Some(RestartPolicyNameEnum::NO),
                         ..Default::default()
                     }),
+                    // Resource limits for release containers too
+                    memory: Some(256 * 1024 * 1024),        // 256MB memory limit
+                    memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
+                    cpu_quota: Some(50000),                  // 0.5 CPU (50% of 100000 period)
+                    cpu_period: Some(100000),                // Standard 100ms period
                     ..Default::default()
                 }),
                 // cmd: Some(vec![release]),

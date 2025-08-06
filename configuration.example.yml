@@ -7,10 +7,10 @@ application:
 
 database:
   user: "postgres"
-  password: "password"
-  host: "localhost"
+  password: "123"       
+  host: "db-pemasak"    
   port: 5432
-  name: "dev"
+  name: "postgres"      
   timeout: 20
 
 git:

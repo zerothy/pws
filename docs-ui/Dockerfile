@@ -2,7 +2,7 @@ FROM node:lts-iron as prod
 RUN npm install -g pnpm
 WORKDIR /app
 COPY . .
-RUN pnpm install --force
+RUN pnpm install
 RUN pnpm build
 
 FROM prod as serve
