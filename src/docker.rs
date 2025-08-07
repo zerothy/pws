@@ -39,7 +39,7 @@ pub async fn build_docker(
 ) -> Result<DockerContainer> {
     let image_name = format!("{}:latest", container_name);
     let old_image_name = format!("{}:old", container_name);
-    let network_name = format!("{}-network", container_name);
+    let network_name = "pemasak".to_string(); // Use shared network for Traefik
     let db_name = format!("{}-db", container_name);
     let volume_name = format!("{}-volume", container_name);
 
@@ -587,6 +587,12 @@ pub async fn build_docker(
             ],
             environment_strings,
         ].concat()),
+        // Auto-add Traefik labels for PWS deployed containers
+        labels: Some(HashMap::from([
+            ("traefik.enable".to_string(), "true".to_string()),
+            (format!("traefik.http.routers.{}.rule", container_name), format!("Host(`{}.localhost`)", container_name)),
+            (format!("traefik.http.services.{}.loadbalancer.server.port", container_name), "80".to_string()),
+        ])),
         host_config: Some(HostConfig {
             restart_policy: Some(RestartPolicy {
                 name: Some(RestartPolicyNameEnum::ON_FAILURE),

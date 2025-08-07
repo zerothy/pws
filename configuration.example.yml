@@ -1,14 +1,14 @@
 application:
   port: 8080
   host: "0.0.0.0"
-  domain: "localhost:8080"
+  domain: "pws.local:8080"
   bodylimit: "25mib"
   ipv6: false
 
 database:
   user: "postgres"
   password: "123"       
-  host: "db-pemasak"    
+  host: "localhost"    
   port: 5432
   name: "postgres"      
   timeout: 20

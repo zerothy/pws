@@ -78,9 +78,9 @@ pub async fn run(listener: TcpListener, state: AppState, config: Settings) -> Re
             "/web",
             ServeDir::new("ui/dist").fallback(ServeFile::new("ui/dist/index.html")),
         )
-        .fallback(fallback)
+        // .fallback(fallback)  // Disabled: Traefik handles routing directly
         .with_state(state.clone())
-        .route_layer(middleware::from_fn_with_state(state, fallback_middleware))
+        // .route_layer(middleware::from_fn_with_state(state, fallback_middleware))  // Disabled with fallback
         .layer(cors);
 
     let addr = listener

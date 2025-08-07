@@ -1,7 +1,9 @@
+
 services:
   db:
     container_name: db-pemasak
     image: postgres:16.0-alpine3.18
+    env_file: .env
     volumes:
       - db-data:/var/lib/postgresql/data
     restart: always
@@ -16,8 +18,6 @@ services:
       timeout: 60s
       retries: 5
       start_period: 80s
-
-    # network_mode: "host"
     networks:
       - pemasak
     ports:
@@ -25,17 +25,15 @@ services:
 
   atlas:
     container_name: atlas-pemasak
-    restart: no
+    restart: "no"
     image: arigaio/atlas:0.36.0
     volumes:
       - ./migrations:/migrations
     depends_on:
       db:
         condition: service_healthy
-
-    # networks:
-    #   - pemasak
-    network_mode: "host"
+    networks:
+      - pemasak
     command:
       [
         "migrate",
@@ -43,64 +41,45 @@ services:
         "--dir",
         "file://migrations",
         "--url",
-        "postgresql://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}?search_path=public&sslmode=disable",
+        "postgresql://${DB_USER}:${DB_PASSWORD}@db-pemasak:${DB_PORT}/${DB_NAME}?search_path=public&sslmode=disable",
       ]
 
   server:
     container_name: server-pemasak
     restart: always
+    env_file: .env
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${APPLICATION_PORT}:${APPLICATION_PORT}"
+      - "8080:8080"
     environment:
-      #   - "DATABASE_HOST=db"
-      #   - "DATABASE_PORT=5432"
-      #   - "APPLICATION_HOST=0.0.0.0"
       - "GIT_BASE=./git-repo"
     volumes:
       - ./configuration.yml:/app/configuration.yml
       - /var/run/docker.sock:/var/run/docker.sock
       - ./git-repo:/app/git-repo
-      - ./assets:/app/assets
     depends_on:
       db:
         condition: service_started
-      fluentd:
-        condition: service_started
       atlas:
         condition: service_completed_successfully
-
-    network_mode: "host"
-    # networks:
-    #   - pemasak
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: localhost:24224
-        tag: docker.server-pemasak
-
-  docker-host:
-    image: qoomon/docker-host
-    container_name: docker-host-pemasak
-    # network_mode: "host"
     networks:
       - pemasak
-    cap_add: ["NET_ADMIN", "NET_RAW"]
-    mem_limit: 8M
-    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pws.rule=Host(`${DOMAIN:-localhost}`) || Host(`www.${DOMAIN:-localhost}`)"
+      - "traefik.http.services.pws.loadbalancer.server.port=8080"
 
+  # Skip monitoring stack for Windows (Optional)
   prometheus:
     image: prom/prometheus
     container_name: prometheus-pemasak
     restart: always
-    # network_mode: "host"
     networks:
       - pemasak
     ports:
       - "9090:9090"
-
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -108,118 +87,64 @@ services:
       - "--web.console.libraries=/etc/prometheus/console_libraries"
       - "--web.console.templates=/etc/prometheus/consoles"
       - "--web.enable-lifecycle"
-        # - '--web.config.file=/etc/prometheus/web.yml'
     volumes:
       - ./config/prometheus:/etc/prometheus
       - prom_data:/prometheus
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:latest
     container_name: grafana-pemasak
     restart: always
-    # network_mode: "host"
+    env_file: .env
     networks:
       - pemasak
     ports:
       - "3000:3000"
-
     environment:
       - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
       - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
-        #- GF_SERVER_ROOT_URL=/grafana
-        #- GF_SERVER_SERVE_FROM_SUB_PATH=true
-      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
-      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
-      - GF_LOG_FILTERS=rendering:debug
+      # Renderer disabled for Windows - no renderer service
     volumes:
       - ./config/grafana:/etc/grafana/provisioning/datasources
       - grafana-data:/var/lib/grafana
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN:-localhost}`)"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter-pemasak
-    restart: always
-    # network_mode: "host"
-    networks:
-      - pemasak
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.rootfs=/rootfs"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-      - "--collector.systemd"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
+  # Docs service (commented out to avoid PNPM issues)
+  # docs:
+  #   container_name: docs-pemasak
+  #   restart: always
+  #   build:
+  #     context: ./docs-ui
+  #     dockerfile: Dockerfile
+  #     target: serve
+  #   ports:
+  #     - "3001:3001"
+  #   environment:
+  #     - PORT=3001
+  #   networks:
+  #     - pemasak
 
-  fluentd:
-    image: grafana/fluent-plugin-loki:main
-    container_name: fluentd-pemasak
-    restart: always
-    # network_mode: "host"
-    networks:
-      - pemasak
-    ports:
-      - "24224:24224"
-      - "24224:24224/udp"
-    volumes:
-      - ./config/fluentd:/fluentd/etc/
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Needed for journald log ingestion:
-      - /etc/machine-id:/etc/machine-id
-      - /dev/log:/dev/log
-      - /var/run/systemd/journal/:/var/run/systemd/journal/
-    environment:
-      LOKI_URL: http://loki:3100
-
-  loki:
-    image: grafana/loki:latest
-    container_name: loki-pemasak
-    restart: always
-    # network_mode: "host"
-    networks:
-      - pemasak
-    ports:
-      - "3100:3100"
-    volumes:
-      # - ./config/loki:/etc/loki
-      - loki-data:/loki
-
-  docs:
-    build:
-      context: ./docs-ui
-      dockerfile: Dockerfile
-    container_name: docs-pemasak
-    restart: always
-    # network_mode: "host"
-    networks:
-      - pemasak
-    ports:
-      - "4000:4000"
-    environment:
-      - PORT=4000
-
-  caddy:
-    image: caddy:2.7.6
-    container_name: caddy-pemasak
-    restart: always
-    network_mode: "host"
-    # networks:
-    #   - pemasak
+  traefik:
+    container_name: traefik-pemasak
+    image: traefik:v3.3
+    # Enables the web UI and tells Traefik to listen to docker
+    command: 
+      - --api.insecure=true
+      - --providers.docker
+      - --accesslog=true
+      - --tracing.otlp=true
+      - --tracing.otlp.http=true
+      - --tracing.otlp.http.endpoint=http://jaeger:4318/v1/
     ports:
       - "80:80"
-      - "443:443"
+      - "7070:8080"
     volumes:
-      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile
-      - caddy:/data
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
-
-  renderer:
-    image: grafana/grafana-image-renderer:latest
-    ports:
-      - 8081
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - pemasak
 
 volumes:
   db-data:
@@ -228,11 +153,10 @@ volumes:
     driver: local
   grafana-data:
     driver: local
-  loki-data:
-    driver: local
-  caddy:
+  traefik-data:
     driver: local
 
 networks:
   pemasak:
+    name: pemasak  # Explicit network name without project prefix
     driver: bridge
