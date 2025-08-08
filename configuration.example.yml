@@ -1,16 +1,16 @@
 application:
   port: 8080
   host: "0.0.0.0"
-  domain: "pws.local:8080"
+  domain: "localhost:8080"
   bodylimit: "25mib"
   ipv6: false
 
 database:
   user: "postgres"
-  password: "123"       
-  host: "localhost"    
+  password: "123"       # ← Change from "password" to "123"
+  host: "db-pemasak"    # ← Change from "localhost" to "db-pemasak" 
   port: 5432
-  name: "postgres"      
+  name: "postgres"      # ← Change from "dev" to "postgres"
   timeout: 20
 
 git:
@@ -21,7 +21,7 @@ log:
   dev: false
 
 auth:
-  sso: true
+  sso: false
   # in hour
   lifespan: 168
   cookiename: session
