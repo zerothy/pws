@@ -17,7 +17,6 @@ CREATE TABLE users (
 
 CREATE TABLE project_owners (
   id          UUID          NOT NULL,
-  -- TODO: make this unique
   name        TEXT          NOT NULL,
   created_at  TIMESTAMPTZ   NOT NULL default now(),
   updated_at  TIMESTAMPTZ   NOT NULL default now(),
@@ -26,8 +25,6 @@ CREATE TABLE project_owners (
   PRIMARY KEY (id)
 );
 
--- TODO: make a way to owners must have atleast one user. posibly with trigger or better constraint
--- for many to many relationship
 CREATE TABLE users_owners (
   user_id     UUID          NOT NULL,
   owner_id    UUID          NOT NULL,
@@ -59,8 +56,6 @@ CREATE TABLE domains (
   name        TEXT          NOT NULL,
   port        INTEGER       NOT NULL,
   docker_ip   TEXT          NOT NULL,
-  -- TODO: rethink if we need this on a seperate table
-  db_url      TEXT,
   created_at  TIMESTAMPTZ   NOT NULL default now(),
   updated_at  TIMESTAMPTZ   NOT NULL default now(),
   deleted_at  TIMESTAMPTZ,
@@ -81,20 +76,6 @@ CREATE TABLE api_token (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- for axum_auth_sessions library
-CREATE TABLE user_permissions (
-  user_id    UUID NOT NULL,
-  token      VARCHAR(256) NOT NULL
-);
-
--- for axum_auth_sessions library
-CREATE TABLE sessions (
-  id VARCHAR(128) NOT NULL PRIMARY KEY,
-  expires INTEGER NULL,
-  session TEXT NOT NULL
-);
-
--- for tracking build state for each project
 CREATE TABLE builds (
   id UUID NOT NULL PRIMARY KEY,
   project_id UUID NOT NULL,
@@ -107,4 +88,17 @@ CREATE TABLE builds (
   finished_at TIMESTAMPTZ,
 
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- for axum_auth_sessions library
+CREATE TABLE user_permissions (
+  user_id    UUID NOT NULL,
+  token      VARCHAR(256) NOT NULL
+);
+
+-- for axum_auth_sessions library
+CREATE TABLE sessions (
+  id VARCHAR(128) NOT NULL PRIMARY KEY,
+  expires INTEGER NULL,
+  session TEXT NOT NULL
 );

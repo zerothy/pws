@@ -39,28 +39,7 @@ async fn main() {
         process::exit(1);
     }
 
-    // check if atlas_chema_revisions exist
-    // TODO: maybe rethink this if we actually want to use this table
-    match sqlx::query!(
-        r#"SELECT * FROM information_schema.tables 
-           WHERE table_schema = 'public' 
-           AND table_name = 'atlas_schema_revisions'
-        "#
-    )
-    .fetch_optional(&pool)
-    .await
-    {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            let err = "atlas_schema_revisions table not found";
-            tracing::error!(err, "Failed to query Postgres");
-            process::exit(1);
-        }
-        Err(err) => {
-            tracing::error!(?err, "Failed to query Postgres");
-            process::exit(1);
-        }
-    }
+    // Atlas migration check removed - using schema.sql initialization instead
 
     // check docker permissions
     if let Err(err) = tokio::fs::metadata("/var/run/docker.sock").await {

@@ -48,6 +48,7 @@ pub async fn run(listener: TcpListener, state: AppState, config: Settings) -> Re
             "http://localhost:8080".parse().unwrap(),
             "http://localhost:5173".parse().unwrap(),
             format!("https://{}", config.domain()).parse().unwrap(),
+            format!("http://{}", config.domain()).parse().unwrap(),
         ])
         .allow_credentials(true);
 

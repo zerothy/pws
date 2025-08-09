@@ -5,7 +5,6 @@ use axum::extract::{State, Path};
 use axum::response::Response;
 use bollard::Docker;
 use bollard::container::{RemoveContainerOptions, StopContainerOptions};
-use bollard::network::InspectNetworkOptions;
 use hyper::{Body, StatusCode};
 use serde::Serialize;
 
@@ -147,9 +146,6 @@ pub async fn post(
     };
 
     let container_name = format!("{owner}-{}", project.trim_end_matches(".git")).replace('.', "-");
-    let db_name = format!("{}-db", container_name);
-    let network_name = format!("{}-network", container_name);
-    let volume_name = format!("{}-volume", container_name);
 
     let docker = match Docker::connect_with_local_defaults() {
         Err(err) => {
@@ -213,81 +209,7 @@ pub async fn post(
         }
     };
 
-    // remove database
-    match docker.inspect_container(&db_name, None).await {
-        Ok(_) => {
-            match docker
-                .stop_container(&db_name, None::<StopContainerOptions>)
-                .await
-            {
-                Ok(_) => {
-                    match docker
-                        .remove_container(&db_name, None::<RemoveContainerOptions>)
-                        .await
-                    {
-                        Ok(_) => {
-                            status.insert("db", "successfully deleted");
-                        }
-                        Err(err) => {
-                            tracing::error!(?err, "Can't delete project: Failed to delete db");
-                            status.insert("db", "failed to delete: container error");
-                        }
-                    }
-                }
-                Err(err) => {
-                    tracing::error!(?err, "Can't delete project: Failed to stop db");
-                    status.insert("db", "failed to delete: container error");
-                }
-            };
-        }
-        Err(err) => {
-            tracing::debug!(?err, "Can't delete project: db does not exist");
-            status.insert("db", "failed to delete: container does not exist");
-        }
-    };
 
-    // delete volume
-    match docker.inspect_volume(&volume_name).await {
-        Ok(_) => match docker.remove_volume(&volume_name, None).await {
-            Ok(_) => {
-                status.insert("volume", "successfully deleted");
-            }
-            Err(err) => {
-                tracing::error!(?err, "Can't delete project: Failed to delete volume");
-                status.insert("volume", "failed to delete: volume error");
-            }
-        },
-        Err(err) => {
-            tracing::debug!(?err, "Can't delete project: volume does not exist");
-            status.insert("volume", "failed to delete: volume does not exist");
-        }
-    };
-
-    // remove network
-    match docker
-        .inspect_network(
-            &network_name,
-            Some(InspectNetworkOptions::<&str> {
-                verbose: true,
-                ..Default::default()
-            }),
-        )
-        .await
-    {
-        Ok(_) => match docker.remove_network(&network_name).await {
-            Ok(_) => {
-                status.insert("network", "successfully deleted");
-            }
-            Err(err) => {
-                tracing::error!(?err, "Can't delete project: Failed to delete network");
-                status.insert("network", "failed to delete: network error");
-            }
-        },
-        Err(err) => {
-            tracing::debug!(?err, "Can't delete project: network does not exist");
-            status.insert("network", "failed to delete: network does not exist");
-        }
-    };
 
     to_response(status)
 }

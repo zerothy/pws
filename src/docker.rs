@@ -1,32 +1,25 @@
-use std::process::Output;
 use std::{collections::HashMap, process::Stdio};
 
 use anyhow::Result;
+use serde_json;
 use bollard::network::DisconnectNetworkOptions;
 use bollard::{
     container::{Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions},
     image::{ListImagesOptions, TagImageOptions},
     network::{ConnectNetworkOptions, InspectNetworkOptions, ListNetworksOptions},
     service::{HostConfig, NetworkContainer, RestartPolicy, RestartPolicyNameEnum},
-    volume::{CreateVolumeOptions, ListVolumesOptions},
     Docker,
 };
-use nixpacks::{
-    create_docker_image,
-    nixpacks::{builder::docker::DockerBuilderOptions, plan::generator::GeneratePlanOptions},
-};
-use procfile;
-use rand::{Rng, SeedableRng};
+use crate::dockerfile_templates::DjangoDockerfile;
 use sqlx::PgPool;
 use tokio::process::Command;
 
-const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+use crate::get_env;
 
 pub struct DockerContainer {
     pub ip: String,
     pub port: i32,
     pub build_log: String,
-    pub db_url: String,
 }
 
 #[tracing::instrument(skip(pool))]
@@ -40,8 +33,6 @@ pub async fn build_docker(
     let image_name = format!("{}:latest", container_name);
     let old_image_name = format!("{}:old", container_name);
     let network_name = "pemasak".to_string(); // Use shared network for Traefik
-    let db_name = format!("{}-db", container_name);
-    let volume_name = format!("{}-volume", container_name);
 
     let docker = Docker::connect_with_local_defaults().map_err(|err| {
         tracing::error!("Failed to connect to docker: {}", err);
@@ -85,39 +76,110 @@ pub async fn build_docker(
             })?;
     };
 
-    // build image
-    let plan_options = GeneratePlanOptions::default();
-    let build_options = DockerBuilderOptions {
-        name: Some(container_name.to_string()),
-        quiet: false,
-        verbose: true,
-        ..Default::default()
-    };
-    let envs = vec![];
-
-    // check if Dockerfile exists
+    // Get user environment variables for Django
+    let envs = sqlx::query!(
+        r#"SELECT environs 
+        FROM projects
+        JOIN project_owners ON projects.owner_id = project_owners.id
+        WHERE projects.name = $1 AND project_owners.name = $2"#,
+        project_name, owner,
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|err| {
+        tracing::error!("Failed to query database: {}", err);
+        err
+    })?;
 
     tracing::info!("BUILDING START");
 
-    let (build_log, nixpacks) = match std::path::Path::new(container_src)
+    let build_log = match std::path::Path::new(container_src)
         .join("Dockerfile")
         .exists()
     {
         true => {
-            tracing::debug!(container_name, "Build using dockerfile");
-            // build from Dockerfile
+            tracing::debug!(container_name, "Build using existing dockerfile");
+            // build from existing Dockerfile with user env vars as build args
+            let mut cmd = Command::new("docker");
+            let mut args = vec![
+                "build".to_string(),
+                "--cpu-period=100000".to_string(),
+                "--cpu-quota=50000".to_string(),
+                "-t".to_string(),
+                image_name.clone(),
+                "-f".to_string(),
+                std::path::Path::new(container_src)
+                    .join("Dockerfile")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            ];
+            
+            // Add environment variables as build args
+            if let Some(env_map) = envs.environs.as_object() {
+                for (key, value) in env_map {
+                    args.push("--build-arg".to_string());
+                    args.push(format!("{}={}", key, value.as_str().unwrap_or("")));
+                }
+                tracing::debug!(container_name, "Added {} build args", env_map.len());
+            }
+            
+            args.push(container_src.to_string());
+            cmd.args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+            let child = cmd.spawn().map_err(|err| {
+                tracing::error!("Failed to spawn docker build: {}", err);
+                err
+            })?;
+
+            let output = child.wait_with_output().await.map_err(|err| {
+                tracing::error!("Failed to wait for docker build: {}", err);
+                err
+            })?;
+
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(String::from_utf8(output.stderr).unwrap()));
+            }
+            String::from_utf8(output.stderr).unwrap()
+        }
+        false => {
+            tracing::debug!(container_name, "Generating efficient Django Dockerfile");
+            
+            // Generate our efficient multi-stage Dockerfile with environment variables
+            let environment_strings = match envs.environs.as_object() {
+                Some(map) => {
+                    map.into_iter().map(|(key, value)| {
+                        format!("{}={}", key, value.as_str().unwrap_or(""))
+                    }).collect::<Vec<_>>()
+                },
+                None => Vec::new(),
+            };
+            
+            let django_dockerfile = DjangoDockerfile::new().with_environment(environment_strings);
+            let dockerfile_content = django_dockerfile.generate();
+            
+            // Write Dockerfile to project directory
+            let dockerfile_path = std::path::Path::new(container_src).join("Dockerfile");
+            std::fs::write(&dockerfile_path, dockerfile_content).map_err(|err| {
+                tracing::error!("Failed to write Dockerfile: {}", err);
+                err
+            })?;
+            
+            tracing::info!("Generated efficient Django Dockerfile at: {:?}", dockerfile_path);
+            
+            // Build using our generated Dockerfile
             let mut cmd = Command::new("docker");
             cmd.args(&[
                 "build",
-                "--cpu-period=100000",
+                "--cpu-period=100000", 
                 "--cpu-quota=50000",
                 "-t",
                 &image_name,
                 "-f",
-                &std::path::Path::new(container_src)
-                    .join("Dockerfile")
-                    .to_str()
-                    .unwrap(),
+                dockerfile_path.to_str().unwrap(),
                 container_src,
             ])
             .stdin(Stdio::piped())
@@ -137,32 +199,8 @@ pub async fn build_docker(
             if !output.status.success() {
                 return Err(anyhow::anyhow!(String::from_utf8(output.stderr).unwrap()));
             }
-            match output.status.success() {
-                true => (String::from_utf8(output.stderr).unwrap(), false),
-                false => {
-                    tracing::error!("Failed to build image");
-
-                    return Err(anyhow::anyhow!(
-                        "Failed to build image: {}",
-                        String::from_utf8(output.stderr).unwrap()
-                    ));
-                }
-            }
-        }
-        false => {
-            tracing::debug!(container_name, "Build using nixpacks");
-            let Output {
-                status,
-                stderr,
-                stdout: _,
-            } = create_docker_image(container_src, envs, &plan_options, &build_options).await?;
-
-            let build_log = String::from_utf8(stderr).unwrap();
-
-            if !status.success() {
-                return Err(anyhow::anyhow!(build_log));
-            }
-            (build_log, true)
+            
+            String::from_utf8(output.stderr).unwrap()
         }
     };
 
@@ -223,33 +261,6 @@ pub async fn build_docker(
             })?;
     }
 
-    // check if database container exists
-    let db_containers = docker
-        .list_containers(Some(ListContainersOptions::<String> {
-            all: true,
-            filters: HashMap::from([("name".to_string(), vec![db_name.to_string()])]),
-            ..Default::default()
-        }))
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to list containers: {}", err);
-            err
-        })?
-        .into_iter()
-        .collect::<Vec<_>>();
-
-    let volumes = docker
-        .list_volumes(Some(ListVolumesOptions::<String> {
-            filters: HashMap::from([("name".to_string(), vec![volume_name.clone()])]),
-        }))
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to list containers: {}", err);
-            err
-        })?
-        .volumes
-        .unwrap_or_default();
-
     // check if network exists
     let network = docker
         .list_networks(Some(ListNetworksOptions {
@@ -291,261 +302,6 @@ pub async fn build_docker(
         }
     };
 
-    // create volume if it doesn't exist
-    if volumes.is_empty() {
-        let res = docker
-            .create_volume(CreateVolumeOptions {
-                name: volume_name.clone(),
-                ..Default::default()
-            })
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to create volume: {}", err);
-                err
-            })?;
-        tracing::info!("create volume response-> {:#?}", res);
-    }
-
-    // create database container if it doesn't exist
-    let db_url = match db_containers.is_empty() {
-        true => {
-            let mut rng = rand::rngs::StdRng::from_entropy();
-            let username = (0..10)
-                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-                .collect::<String>();
-
-            let password = (0..20)
-                .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-                .collect::<String>();
-
-            // create database container
-            let config = Config {
-                image: Some("postgres:16.0-alpine3.18".to_string()),
-                volumes: Some(HashMap::from([(
-                    format!("{volume_name}:/var/lib/postgresql/data"),
-                    HashMap::new(),
-                )])),
-                env: Some(vec![
-                    format!("POSTGRES_USER={}", username),
-                    format!("POSTGRES_PASSWORD={}", password),
-                    format!("POSTGRES_DB={}", "postgres"),
-                ]),
-                host_config: Some(HostConfig {
-                    restart_policy: Some(RestartPolicy {
-                        name: Some(RestartPolicyNameEnum::ON_FAILURE),
-                        ..Default::default()
-                    }),
-                    // Database resource limits - PostgreSQL needs less CPU but similar memory
-                    memory: Some(256 * 1024 * 1024),        // 256MB memory limit
-                    memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
-                    cpu_quota: Some(25000),                  // 0.25 CPU (25% - DB less CPU intensive)
-                    cpu_period: Some(100000),                // Standard 100ms period
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-
-            let _res = &docker
-                .create_container(
-                    Some(CreateContainerOptions {
-                        name: db_name.clone(),
-                        platform: None,
-                    }),
-                    config,
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to create container: {}", err);
-                    err
-                })?;
-
-            docker
-                .start_container(&db_name, None::<StartContainerOptions<&str>>)
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to start container: {}", err);
-                    err
-                })?;
-
-            // wait until postgres is ready
-            // TODO: change this into a psql command check
-            std::thread::sleep(std::time::Duration::from_secs(10));
-
-            let _ = docker
-                .disconnect_network(
-                    "bridge",
-                    DisconnectNetworkOptions {
-                        container: &db_name,
-                        force: true,
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to disconnect container from bridge: {}", err);
-                    err
-                });
-
-            // connect db container to network
-            docker
-                .connect_network(
-                    &network_name,
-                    ConnectNetworkOptions {
-                        container: db_name.clone(),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to connect network: {}", err);
-                    err
-                })?;
-
-            format!(
-                "postgresql://{}:{}@{}:{}/{}",
-                username, password, db_name, 5432, "postgres"
-            )
-        }
-        false => {
-            match sqlx::query!(
-                r#"SELECT db_url FROM domains
-                   JOIN projects ON projects.id = domains.project_id
-                   WHERE projects.name = $1
-                "#,
-                project_name
-            )
-            .fetch_optional(&pool)
-            .await
-            {
-                Ok(Some(row)) => row.db_url.unwrap(),
-                Ok(None) => {
-                    // delete database create again
-                    tracing::debug!("No database url found for project {}", project_name);
-
-                    let _ = docker.stop_container(&db_name, None).await.map_err(|err| {
-                        tracing::error!("Failed to remove container: {}", err);
-                        err
-                    });
-
-                    let _ = docker
-                        .remove_container(&db_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove container: {}", err);
-                            err
-                        });
-
-                    let _ = docker
-                        .remove_volume(&volume_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove volume: {}", err);
-                            err
-                        })?;
-
-                    let mut rng = rand::rngs::StdRng::from_entropy();
-                    let username = (0..10)
-                        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-                        .collect::<String>();
-
-                    let password = (0..20)
-                        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-                        .collect::<String>();
-
-                    // create database container
-                    let config = Config {
-                        image: Some("postgres:16.0-alpine3.18".to_string()),
-                        volumes: Some(HashMap::from([(
-                            format!("{volume_name}:/var/lib/postgresql/data"),
-                            HashMap::new(),
-                        )])),
-                        env: Some(vec![
-                            format!("POSTGRES_USER={}", username),
-                            format!("POSTGRES_PASSWORD={}", password),
-                            format!("POSTGRES_DB={}", "postgres"),
-                        ]),
-                        host_config: Some(HostConfig {
-                            restart_policy: Some(RestartPolicy {
-                                name: Some(RestartPolicyNameEnum::ON_FAILURE),
-                                ..Default::default()
-                            }),
-                            // Database resource limits - PostgreSQL recreate case
-                            memory: Some(256 * 1024 * 1024),        // 256MB memory limit
-                            memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
-                            cpu_quota: Some(25000),                  // 0.25 CPU (25% - DB less CPU intensive)
-                            cpu_period: Some(100000),                // Standard 100ms period
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    };
-
-                    let _res = &docker
-                        .create_container(
-                            Some(CreateContainerOptions {
-                                name: db_name.clone(),
-                                platform: None,
-                            }),
-                            config,
-                        )
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to create container: {}", err);
-                            err
-                        })?;
-
-                    docker
-                        .start_container(&db_name, None::<StartContainerOptions<&str>>)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to start container: {}", err);
-                            err
-                        })?;
-
-                    // wait until postgres is ready
-                    // TODO: change this into a psql command check
-                    std::thread::sleep(std::time::Duration::from_secs(10));
-
-                    let _ = docker
-                        .disconnect_network(
-                            "bridge",
-                            DisconnectNetworkOptions {
-                                container: &db_name,
-                                force: true,
-                            },
-                        )
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to disconnect container from bridge: {}", err);
-                            err
-                        });
-
-                    // connect db container to network
-                    docker
-                        .connect_network(
-                            &network_name,
-                            ConnectNetworkOptions {
-                                container: db_name.clone(),
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to connect network: {}", err);
-                            err
-                        })?;
-
-                    format!(
-                        "postgresql://{}:{}@{}:{}/{}",
-                        username, password, db_name, 5432, "postgres"
-                    )
-                }
-                Err(err) => {
-                    tracing::error!("Failed to query database: {}", err);
-                    return anyhow::Result::Err(err.into());
-                }
-            }
-        }
-    };
-
     // TODO: figure out if we need make this configurable
     let port = 80;
 
@@ -577,20 +333,14 @@ pub async fn build_docker(
         }
     }?;
 
-    let mut config: Config<String> = Config {
+
+    let config: Config<String> = Config {
         image: Some(image_name.clone()),
-        // TDDO: rethink if we need to make this configurable
-        env: Some([
-            vec![
-                format!("PORT={}", port),
-                format!("DATABASE_URL={}", db_url),
-            ],
-            environment_strings,
-        ].concat()),
+        env: Some(environment_strings),
         // Auto-add Traefik labels for PWS deployed containers
         labels: Some(HashMap::from([
             ("traefik.enable".to_string(), "true".to_string()),
-            (format!("traefik.http.routers.{}.rule", container_name), format!("Host(`{}.localhost`)", container_name)),
+            (format!("traefik.http.routers.{}.rule", container_name), format!("Host(`{}.{}`)", container_name, get_env::domain())),
             (format!("traefik.http.services.{}.loadbalancer.server.port", container_name), "80".to_string()),
         ])),
         host_config: Some(HostConfig {
@@ -607,157 +357,6 @@ pub async fn build_docker(
         }),
         ..Default::default()
     };
-
-    // if not nixpacks, we need to read from procfile and use release and web command
-    if !nixpacks {
-        // read procfile
-        let (release, web) =
-            std::fs::read_to_string(std::path::Path::new(container_src).join("Procfile"))
-                .map(|content| {
-                    procfile::parse(&content)
-                        .map_err(|err| {
-                            tracing::error!("Failed to parse Procfile: {}", err);
-                            err
-                        })
-                        .map(|map| {
-                            let web = map.get("web").map(|web| web.to_string());
-                            let release = map.get("release").map(|release| release.to_string());
-                            (release, web)
-                        })
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default();
-
-        tracing::debug!(release = ?release, web = ?web, "Procfile");
-
-        if let Some(release) = release {
-            let config = Config {
-                image: Some(image_name.clone()),
-                env: Some(vec![
-                    "PRODUCTION=true".to_string(),
-                    format!("PORT={}", port),
-                    format!("DATABASE_URL={}", db_url),
-                ]),
-                host_config: Some(HostConfig {
-                    restart_policy: Some(RestartPolicy {
-                        name: Some(RestartPolicyNameEnum::NO),
-                        ..Default::default()
-                    }),
-                    // Resource limits for release containers too
-                    memory: Some(256 * 1024 * 1024),        // 256MB memory limit
-                    memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
-                    cpu_quota: Some(50000),                  // 0.5 CPU (50% of 100000 period)
-                    cpu_period: Some(100000),                // Standard 100ms period
-                    ..Default::default()
-                }),
-                // cmd: Some(vec![release]),
-                cmd: Some(release.split(' ').map(|s| s.to_string()).collect()),
-                ..Default::default()
-            };
-            if let Err(err) = docker
-                .create_container(
-                    Some(CreateContainerOptions {
-                        name: container_name,
-                        platform: None,
-                    }),
-                    config,
-                )
-                .await
-            {
-                tracing::error!("Failed to create container: {}", err);
-                if db_containers.is_empty() {
-                    let _ = docker.stop_container(&db_name, None).await.map_err(|err| {
-                        tracing::error!("Failed to remove container: {}", err);
-                        err
-                    });
-
-                    let _ = docker
-                        .remove_container(&db_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove container: {}", err);
-                            err
-                        });
-
-                    let _ = docker
-                        .remove_volume(&volume_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove volume: {}", err);
-                            err
-                        });
-                }
-
-                return Err(err.into());
-            }
-
-            docker
-                .connect_network(
-                    &network_name,
-                    ConnectNetworkOptions {
-                        container: container_name,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to connect network: {}", err);
-                    err
-                })?;
-
-            if let Err(err) = docker
-                .start_container(container_name, None::<StartContainerOptions<&str>>)
-                .await
-            {
-                tracing::error!("Failed to start container: {}", err);
-
-                if db_containers.is_empty() {
-                    let _ = docker.stop_container(&db_name, None).await.map_err(|err| {
-                        tracing::error!("Failed to remove container: {}", err);
-                        err
-                    });
-
-                    let _ = docker
-                        .remove_container(&db_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove container: {}", err);
-                            err
-                        });
-
-                    let _ = docker
-                        .remove_volume(&volume_name, None)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!("Failed to remove volume: {}", err);
-                            err
-                        });
-                }
-            }
-
-            // wait until container is stopped
-            let mut i = 0;
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-
-                if let Err(err) = docker.remove_container(container_name, None).await {
-                    tracing::debug!("Failed to remove container. Will try again: {}", err);
-                    i += 1;
-                    if i > 10 {
-                        tracing::error!("Failed to remove container: {}", err);
-                        break;
-                    }
-
-                    continue;
-                }
-                break;
-            }
-        }
-
-        if let Some(web) = web {
-            config.cmd = Some(web.split(' ').map(|s| s.to_string()).collect());
-        }
-    }
 
     let res = docker
         .create_container(
@@ -860,6 +459,5 @@ pub async fn build_docker(
         ip,
         port,
         build_log,
-        db_url,
     })
 }

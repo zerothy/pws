@@ -1,6 +1,8 @@
 pub mod auth;
 pub mod configuration;
 pub mod docker;
+pub mod dockerfile_templates;
+pub mod get_env;
 pub mod git;
 pub mod owner;
 pub mod projects;

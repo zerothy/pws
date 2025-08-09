@@ -154,7 +154,7 @@ pub async fn trigger_build(
 
     // TODO: Differentiate types of errors returned by build_docker (ex: ImageBuildError, NetworkCreateError, ContainerAttachError)
     let DockerContainer {
-        ip, port, db_url, ..
+        ip, port, ..
     } = match build_docker(&owner, &repo, &container_name, &container_src, pool.clone()).await {
         Ok(result) => {
             if let Err(err) = sqlx::query!(
@@ -211,17 +211,15 @@ pub async fn trigger_build(
         Ok(Some(subdomain)) => Ok(subdomain.name),
         Ok(None) => {
             let id = Uuid::from(Ulid::new());
-            let subdomain = sqlx::query!(
-                r#"INSERT INTO domains (id, project_id, name, port, docker_ip, db_url)
-                   VALUES ($1, $2, $3, $4, $5, $6)
-                "#,
-                id,
-                project.id,
-                container_name,
-                port,
-                ip,
-                db_url
+            let subdomain = sqlx::query(
+                r#"INSERT INTO domains (id, project_id, name, port, docker_ip)
+                   VALUES ($1, $2, $3, $4, $5)"#
             )
+            .bind(id)
+            .bind(project.id)
+            .bind(container_name.clone())
+            .bind(port)
+            .bind(ip.clone())
             .execute(&pool)
             .await;
 

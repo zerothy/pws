@@ -6,6 +6,7 @@ services:
     env_file: .env
     volumes:
       - db-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     restart: always
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -22,27 +23,6 @@ services:
       - pemasak
     ports:
       - "${DB_PORT}:${DB_PORT}"
-
-  atlas:
-    container_name: atlas-pemasak
-    restart: "no"
-    image: arigaio/atlas:0.36.0
-    volumes:
-      - ./migrations:/migrations
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - pemasak
-    command:
-      [
-        "migrate",
-        "apply",
-        "--dir",
-        "file://migrations",
-        "--url",
-        "postgresql://${DB_USER}:${DB_PASSWORD}@db-pemasak:${DB_PORT}/${DB_NAME}?search_path=public&sslmode=disable",
-      ]
 
   server:
     container_name: server-pemasak
@@ -62,8 +42,6 @@ services:
     depends_on:
       db:
         condition: service_started
-      atlas:
-        condition: service_completed_successfully
     networks:
       - pemasak
     labels:
@@ -112,20 +90,6 @@ services:
       - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN:-localhost}`)"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
-  # Docs service (commented out to avoid PNPM issues)
-  # docs:
-  #   container_name: docs-pemasak
-  #   restart: always
-  #   build:
-  #     context: ./docs-ui
-  #     dockerfile: Dockerfile
-  #     target: serve
-  #   ports:
-  #     - "3001:3001"
-  #   environment:
-  #     - PORT=3001
-  #   networks:
-  #     - pemasak
 
   traefik:
     container_name: traefik-pemasak
@@ -141,6 +105,11 @@ services:
     ports:
       - "80:80"
       - "7070:8080"
+    depends_on:
+      server:
+        condition: service_started
+      grafana:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
