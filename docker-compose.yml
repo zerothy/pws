@@ -91,6 +91,22 @@ services:
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
 
+  portainer:
+    container_name: portainer-pemasak
+    image: portainer/portainer-ce:latest
+    restart: always
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    networks:
+      - pemasak
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN:-localhost}`)"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
   traefik:
     container_name: traefik-pemasak
     image: traefik:v3.3
@@ -110,6 +126,8 @@ services:
         condition: service_started
       grafana:
         condition: service_started
+      portainer:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -123,6 +141,8 @@ volumes:
   grafana-data:
     driver: local
   traefik-data:
+    driver: local
+  portainer-data:
     driver: local
 
 networks:
