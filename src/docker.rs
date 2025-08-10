@@ -337,10 +337,12 @@ pub async fn build_docker(
     let config: Config<String> = Config {
         image: Some(image_name.clone()),
         env: Some(environment_strings),
-        // Auto-add Traefik labels for PWS deployed containers
+        // Auto-add Traefik labels for PWS deployed containers with HTTPS
         labels: Some(HashMap::from([
             ("traefik.enable".to_string(), "true".to_string()),
             (format!("traefik.http.routers.{}.rule", container_name), format!("Host(`{}.{}`)", container_name, get_env::domain())),
+            (format!("traefik.http.routers.{}.entrypoints", container_name), "websecure".to_string()),
+            (format!("traefik.http.routers.{}.tls.certresolver", container_name), "letsencrypt".to_string()),
             (format!("traefik.http.services.{}.loadbalancer.server.port", container_name), "80".to_string()),
         ])),
         host_config: Some(HostConfig {
