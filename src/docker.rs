@@ -161,10 +161,11 @@ pub async fn build_docker(
             let django_dockerfile = DjangoDockerfile::new().with_environment(environment_strings);
             let dockerfile_content = django_dockerfile.generate();
             
-            // Write Dockerfile to project directory
-            let dockerfile_path = std::path::Path::new(container_src).join("Dockerfile");
+            // Write Dockerfile to temporary file (don't pollute project directory)
+            let temp_dir = std::env::temp_dir();
+            let dockerfile_path = temp_dir.join(format!("Dockerfile.{}.tmp", container_name));
             std::fs::write(&dockerfile_path, dockerfile_content).map_err(|err| {
-                tracing::error!("Failed to write Dockerfile: {}", err);
+                tracing::error!("Failed to write temporary Dockerfile: {}", err);
                 err
             })?;
             
