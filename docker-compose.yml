@@ -47,6 +47,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.pws.rule=Host(`${DOMAIN:-localhost}`) || Host(`www.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.pws.entrypoints=websecure"
+      - "traefik.http.routers.pws.tls.certresolver=letsencrypt"
       - "traefik.http.services.pws.loadbalancer.server.port=8080"
 
   # Skip monitoring stack for Windows (Optional)
@@ -88,6 +90,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
 
@@ -105,11 +109,14 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
 
   traefik:
     container_name: traefik-pemasak
     image: traefik:v3.3
+    env_file: .env
     # Enables the web UI and tells Traefik to listen to docker
     command: 
       - --api.insecure=true
@@ -118,8 +125,18 @@ services:
       - --tracing.otlp=true
       - --tracing.otlp.http=true
       - --tracing.otlp.http.endpoint=http://jaeger:4318/v1/
+      # Let's Encrypt configuration
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # Global redirect to HTTPS
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
     ports:
       - "80:80"
+      - "443:443"
       - "7070:8080"
     depends_on:
       server:
@@ -130,6 +147,7 @@ services:
         condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-data:/letsencrypt
     networks:
       - pemasak
 
