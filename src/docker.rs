@@ -11,6 +11,7 @@ use bollard::{
     Docker,
 };
 use futures_util::stream::TryStreamExt;
+use hyper::Body;
 use tar::Builder;
 use std::io::Cursor;
 use crate::dockerfile_templates::DjangoDockerfile;
@@ -203,17 +204,16 @@ pub async fn build_docker(
                 dockerfile: "Dockerfile".to_string(),
                 t: image_name.clone(),
                 rm: true,
-                pull: Some(true),
+                pull: true,
                 cpuperiod: Some(100000),
                 cpuquota: Some(50000),
                 ..Default::default()
             };
             
-            let tar_stream = futures_util::stream::once(async move {
-                Ok::<_, std::io::Error>(bytes::Bytes::from(tar_data))
-            });
+            // Convert tar data to hyper::Body
+            let tar_body = Body::from(bytes::Bytes::from(tar_data));
             
-            let mut build_result = docker.build_image(Some(build_options), None, Some(tar_stream));
+            let mut build_result = docker.build_image(build_options, None, Some(tar_body));
             let mut build_log = String::new();
             
             while let Some(build_info) = build_result.try_next().await.map_err(|err| {
