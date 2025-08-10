@@ -2,18 +2,15 @@ use std::{collections::HashMap, process::Stdio};
 
 use anyhow::Result;
 use serde_json;
+use uuid;
 use bollard::network::DisconnectNetworkOptions;
 use bollard::{
     container::{Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions},
-    image::{BuildImageOptions, ListImagesOptions, TagImageOptions},
+    image::{ListImagesOptions, TagImageOptions},
     network::{ConnectNetworkOptions, InspectNetworkOptions, ListNetworksOptions},
     service::{HostConfig, NetworkContainer, RestartPolicy, RestartPolicyNameEnum},
     Docker,
 };
-use futures_util::stream::TryStreamExt;
-use hyper::Body;
-use tar::Builder;
-use std::io::Cursor;
 use crate::dockerfile_templates::DjangoDockerfile;
 use sqlx::PgPool;
 use tokio::process::Command;
@@ -165,72 +162,56 @@ pub async fn build_docker(
             let django_dockerfile = DjangoDockerfile::new().with_environment(environment_strings);
             let dockerfile_content = django_dockerfile.generate();
             
-            tracing::info!("Generated efficient Django Dockerfile in-memory");
+            // Write Dockerfile to temporary file (don't pollute project directory)
+            // Add UUID for extra uniqueness to handle concurrent builds of same project
+            let temp_dir = std::env::temp_dir();
+            let build_uuid = uuid::Uuid::new_v4();
+            let dockerfile_path = temp_dir.join(format!("Dockerfile.{}.{}.tmp", container_name, build_uuid));
+            std::fs::write(&dockerfile_path, dockerfile_content).map_err(|err| {
+                tracing::error!("Failed to write temporary Dockerfile: {}", err);
+                err
+            })?;
             
-            // Create in-memory tar archive with Dockerfile content
-            let mut tar_data = Vec::new();
-            {
-                let mut tar_builder = Builder::new(&mut tar_data);
-                
-                // Add Dockerfile to tar
-                let mut dockerfile_header = tar::Header::new_gnu();
-                dockerfile_header.set_path("Dockerfile").map_err(|err| {
-                    tracing::error!("Failed to set Dockerfile path: {}", err);
-                    anyhow::anyhow!("Failed to set Dockerfile path: {}", err)
-                })?;
-                dockerfile_header.set_size(dockerfile_content.len() as u64);
-                dockerfile_header.set_mode(0o644);
-                dockerfile_header.set_cksum();
-                
-                tar_builder.append(&dockerfile_header, dockerfile_content.as_bytes()).map_err(|err| {
-                    tracing::error!("Failed to append Dockerfile to tar: {}", err);
-                    anyhow::anyhow!("Failed to append Dockerfile to tar: {}", err)
-                })?;
-                
-                // Add source files to tar  
-                tar_builder.append_dir_all(".", container_src).map_err(|err| {
-                    tracing::error!("Failed to append source directory to tar: {}", err);
-                    anyhow::anyhow!("Failed to append source directory to tar: {}", err)
-                })?;
-                
-                tar_builder.finish().map_err(|err| {
-                    tracing::error!("Failed to finish tar archive: {}", err);
-                    anyhow::anyhow!("Failed to finish tar archive: {}", err)
-                })?;
+            tracing::info!("Generated efficient Django Dockerfile at: {:?}", dockerfile_path);
+            
+            // Build using our generated Dockerfile
+            let mut cmd = Command::new("docker");
+            cmd.args(&[
+                "build",
+                "--cpu-period=100000", 
+                "--cpu-quota=50000",
+                "-t",
+                &image_name,
+                "-f",
+                dockerfile_path.to_str().unwrap(),
+                container_src,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+            let child = cmd.spawn().map_err(|err| {
+                tracing::error!("Failed to spawn docker build: {}", err);
+                err
+            })?;
+
+            let output = child.wait_with_output().await.map_err(|err| {
+                tracing::error!("Failed to wait for docker build: {}", err);
+                err
+            })?;
+
+            // Cleanup: Delete temporary Dockerfile
+            if let Err(err) = std::fs::remove_file(&dockerfile_path) {
+                tracing::warn!("Failed to cleanup temporary Dockerfile {:?}: {}", dockerfile_path, err);
+            } else {
+                tracing::debug!("Cleaned up temporary Dockerfile: {:?}", dockerfile_path);
+            }
+
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(String::from_utf8(output.stderr).unwrap()));
             }
             
-            // Build using Bollard API with in-memory tar stream
-            let build_options = BuildImageOptions {
-                dockerfile: "Dockerfile".to_string(),
-                t: image_name.clone(),
-                rm: true,
-                pull: true,
-                cpuperiod: Some(100000),
-                cpuquota: Some(50000),
-                ..Default::default()
-            };
-            
-            // Convert tar data to hyper::Body
-            let tar_body = Body::from(bytes::Bytes::from(tar_data));
-            
-            let mut build_result = docker.build_image(build_options, None, Some(tar_body));
-            let mut build_log = String::new();
-            
-            while let Some(build_info) = build_result.try_next().await.map_err(|err| {
-                tracing::error!("Docker build failed: {}", err);
-                anyhow::anyhow!("Docker build failed: {}", err)
-            })? {
-                if let Some(stream) = build_info.stream {
-                    build_log.push_str(&stream);
-                    tracing::debug!("Build: {}", stream.trim());
-                }
-                if let Some(error) = build_info.error {
-                    tracing::error!("Build error: {}", error);
-                    return Err(anyhow::anyhow!("Docker build failed: {}", error));
-                }
-            }
-            
-            build_log
+            String::from_utf8(output.stderr).unwrap()
         }
     };
 
