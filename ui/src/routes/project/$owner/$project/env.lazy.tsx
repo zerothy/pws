@@ -34,9 +34,9 @@ function EnvironmentVariable({ envKey, envValue, owner, project }: { envKey: str
   return (
     <div className="bg-slate-900 px-6 py-4 rounded-lg grid grid-cols-3 items-center gap-4">
       <div className="text-lg">
-        <pre>{envKey}</pre>
+        <pre className="truncate">{envKey}</pre>
       </div>
-      <div>
+      <div className="truncate text-sm font-mono bg-slate-800 px-3 py-2 rounded border max-w-full overflow-hidden" title={envValue}>
         {envValue}
       </div>
       <div className="flex justify-end space-x-4">

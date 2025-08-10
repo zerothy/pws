@@ -113,6 +113,25 @@ services:
       - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
 
+  docs-ui:
+    container_name: docs-ui-pemasak
+    build:
+      context: ./docs-ui
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    networks:
+      - pemasak
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.docs.rule=Host(`docs.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.docs.entrypoints=websecure"
+      - "traefik.http.routers.docs.tls.certresolver=letsencrypt"
+      - "traefik.http.services.docs.loadbalancer.server.port=3001"
+
   traefik:
     container_name: traefik-pemasak
     image: traefik:v3.3
