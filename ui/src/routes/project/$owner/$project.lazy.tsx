@@ -25,8 +25,8 @@ const apiFetcher = (input: URL | RequestInfo, options?: RequestInit) => {
 function ProjectDashboard() {
     // @ts-ignore
     const { owner, project } = useParams({ strict: false })
-    const domain = import.meta.env.VITE_API_URL.match(/((.*):\/\/(.*)\/)/)?.[0].replace(/^https?:\/\//, "")
-    console.log(domain)
+    const apiUrl = new URL(import.meta.env.VITE_API_URL)
+    const domain = apiUrl.hostname
 
     const { data: builds, isLoading } = useSWR(`${import.meta.env.VITE_API_URL}/project/${owner}/${project}/builds/`, apiFetcher)
 
