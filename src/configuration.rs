@@ -19,6 +19,7 @@ pub struct Settings {
     pub git: GitSettings,
     pub auth: AuthSettings,
     pub build: BuilderSettings,
+    pub container: ContainerSettings,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -68,6 +69,13 @@ pub struct AuthSettings {
     pub maxlifespan: i64,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct ContainerSettings {
+    pub cpu: f64,
+    pub memory: String,
+    pub swap: String,
+}
+
 pub fn get_configuration() -> Result<Settings, ConfigError> {
     Config::builder()
         .set_default("application.port", 8080)?
@@ -92,6 +100,9 @@ pub fn get_configuration() -> Result<Settings, ConfigError> {
         .set_default("auth.secure", false)?
         .set_default("auth.maxlifespan", 365)?
         .set_default("build.timeout", 120000)?
+        .set_default("container.cpu", 0.5)?
+        .set_default("container.memory", "256M")?
+        .set_default("container.swap", "320M")?
         .set_default(
             "builder.max",
             available_parallelism()
@@ -153,5 +164,28 @@ impl Settings {
             .with_http_only(self.auth.httponly)
             .with_secure(self.auth.secure)
             .with_max_lifetime(Duration::days(self.auth.maxlifespan))
+    }
+
+    pub fn container_memory_bytes(&self) -> Result<i64, ConfigError> {
+        Byte::from_str(&self.container.memory)
+            .map_err(|e| ConfigError::Message(format!("Invalid memory format: {}", e)))
+            .map(|b| b.get_bytes() as i64)
+    }
+
+    pub fn container_swap_bytes(&self) -> Result<i64, ConfigError> {
+        Byte::from_str(&self.container.swap)
+            .map_err(|e| ConfigError::Message(format!("Invalid swap format: {}", e)))
+            .map(|b| b.get_bytes() as i64)
+    }
+
+    pub fn container_cpu_quota(&self) -> i64 {
+        // Convert CPU float (0.5 = 50% of one core) to quota
+        // Standard period is 100000 microseconds (100ms)
+        (self.container.cpu * 100000.0) as i64
+    }
+
+    pub fn container_cpu_period(&self) -> i64 {
+        // Standard 100ms period
+        100000
     }
 }
