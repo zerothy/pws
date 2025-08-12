@@ -11,7 +11,7 @@ use bollard::{
     service::{HostConfig, NetworkContainer, RestartPolicy, RestartPolicyNameEnum},
     Docker,
 };
-use crate::dockerfile_templates::DjangoDockerfile;
+use crate::{dockerfile_templates::DjangoDockerfile, get_env, configuration::Settings};
 use sqlx::PgPool;
 use tokio::process::Command;
 
@@ -30,6 +30,7 @@ pub async fn build_docker(
     container_name: &str,
     container_src: &str,
     pool: PgPool,
+    config: &Settings,
 ) -> Result<DockerContainer> {
     let image_name = format!("{}:latest", container_name);
     let old_image_name = format!("{}:old", container_name);
@@ -104,8 +105,8 @@ pub async fn build_docker(
             let mut cmd = Command::new("docker");
             let mut args = vec![
                 "build".to_string(),
-                "--cpu-period=100000".to_string(),
-                "--cpu-quota=50000".to_string(),
+                format!("--cpu-period={}", config.container_cpu_period()),
+                format!("--cpu-quota={}", config.container_cpu_quota()),
                 "-t".to_string(),
                 image_name.clone(),
                 "-f".to_string(),
@@ -178,8 +179,8 @@ pub async fn build_docker(
             let mut cmd = Command::new("docker");
             cmd.args(&[
                 "build",
-                "--cpu-period=100000", 
-                "--cpu-quota=50000",
+                &format!("--cpu-period={}", config.container_cpu_period()),
+                &format!("--cpu-quota={}", config.container_cpu_quota()),
                 "-t",
                 &image_name,
                 "-f",
@@ -361,11 +362,11 @@ pub async fn build_docker(
                 name: Some(RestartPolicyNameEnum::ON_FAILURE),
                 ..Default::default()
             }),
-            // Resource limits for 200+ students - prevent resource abuse
-            memory: Some(256 * 1024 * 1024),        // 256MB memory limit
-            memory_swap: Some(320 * 1024 * 1024),   // 320MB total (256M + 64M swap)
-            cpu_quota: Some(50000),                  // 0.5 CPU (50% of 100000 period)
-            cpu_period: Some(100000),                // Standard 100ms period
+            // Resource limits from configuration - prevent resource abuse
+            memory: Some(config.container_memory_bytes().unwrap_or(256 * 1024 * 1024)),
+            memory_swap: Some(config.container_swap_bytes().unwrap_or(320 * 1024 * 1024)),
+            cpu_quota: Some(config.container_cpu_quota()),
+            cpu_period: Some(config.container_cpu_period()),
             ..Default::default()
         }),
         ..Default::default()

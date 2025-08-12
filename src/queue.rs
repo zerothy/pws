@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use ulid::Ulid;
 use uuid::Uuid;
 
-use crate::docker::{build_docker, DockerContainer};
+use crate::{docker::{build_docker, DockerContainer}, configuration::Settings};
 
 type ConcurrentMutex<T> = Arc<Mutex<T>>;
 
@@ -62,10 +62,11 @@ pub struct BuildQueue {
     pub waiting_set: ConcurrentMutex<HashSet<String>>,
     pub receive_channel: Receiver<BuildQueueItem>,
     pub pg_pool: PgPool,
+    pub config: Settings,
 }
 
 impl BuildQueue {
-    pub fn new(build_count: usize, pg_pool: PgPool) -> (Self, Sender<BuildQueueItem>) {
+    pub fn new(build_count: usize, pg_pool: PgPool, config: Settings) -> (Self, Sender<BuildQueueItem>) {
         let (tx, rx) = mpsc::channel(32);
 
         (
@@ -75,6 +76,7 @@ impl BuildQueue {
                 waiting_set: Arc::new(Mutex::new(HashSet::new())),
                 receive_channel: rx,
                 pg_pool,
+                config,
             },
             tx,
         )
@@ -90,6 +92,7 @@ pub async fn trigger_build(
         container_name,
     }: BuildItem,
     pool: PgPool,
+    config: &Settings,
 ) -> Result<String, BuildError> {
     // TODO: need to emmit error somewhere
     let project = match sqlx::query!(
@@ -155,7 +158,7 @@ pub async fn trigger_build(
     // TODO: Differentiate types of errors returned by build_docker (ex: ImageBuildError, NetworkCreateError, ContainerAttachError)
     let DockerContainer {
         ip, port, ..
-    } = match build_docker(&owner, &repo, &container_name, &container_src, pool.clone()).await {
+    } = match build_docker(&owner, &repo, &container_name, &container_src, pool.clone(), config).await {
         Ok(result) => {
             if let Err(err) = sqlx::query!(
                 "UPDATE builds SET status = 'successful', log = $1 WHERE id = $2",
@@ -245,6 +248,7 @@ pub async fn process_task_poll(
     waiting_set: ConcurrentMutex<HashSet<String>>,
     build_count: Arc<AtomicUsize>,
     pool: PgPool,
+    config: Settings,
 ) {
     loop {
         let mut waiting_queue = waiting_queue.lock().await;
@@ -262,10 +266,11 @@ pub async fn process_task_poll(
             {
                 let build_count = Arc::clone(&build_count);
                 let pool = pool.clone();
+                let config = config.clone();
 
                 build_count.fetch_sub(1, Ordering::SeqCst);
                 tokio::spawn(async move {
-                    match trigger_build(build_item, pool).await {
+                    match trigger_build(build_item, pool, &config).await {
                         Ok(subdomain) => tracing::info!("Project deployed at {subdomain}"),
                         Err(BuildError {
                             message,
@@ -363,9 +368,11 @@ pub async fn build_queue_handler(build_queue: BuildQueue) {
         let waiting_queue = Arc::clone(&build_queue.waiting_queue);
         let waiting_set = Arc::clone(&build_queue.waiting_set);
         let pool = build_queue.pg_pool.clone();
+        let config = build_queue.config.clone();
+        let build_count = Arc::clone(&build_queue.build_count);
 
         tokio::spawn(async move {
-            process_task_poll(waiting_queue, waiting_set, build_queue.build_count, pool).await;
+            process_task_poll(waiting_queue, waiting_set, build_count, pool, config).await;
         });
     }
     {
