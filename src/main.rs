@@ -85,7 +85,7 @@ async fn main() {
         }
     }
 
-    let (build_queue, build_channel) = BuildQueue::new(config.build.max, pool.clone());
+    let (build_queue, build_channel) = BuildQueue::new(config.build.max, pool.clone(), config.clone());
 
     tokio::spawn(async move {
         build_queue_handler(build_queue).await;
