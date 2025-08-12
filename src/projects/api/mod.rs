@@ -15,6 +15,8 @@ mod view_project_environ;
 mod update_project_environ;
 mod delete_project_environ;
 mod generate_status_badge;
+mod get_git_credentials;
+mod regenerate_git_password;
 
 pub async fn router(_state: AppState, _config: &Settings) -> Router<AppState, Body> {
     Router::new()
@@ -27,6 +29,8 @@ pub async fn router(_state: AppState, _config: &Settings) -> Router<AppState, Bo
         .route_with_tsr("/api/project/:owner/:project/delete", post(delete_project::post))
         .route_with_tsr("/api/project/:owner/:project/volume/delete", post(delete_volume::post))
         .route_with_tsr("/api/project/:owner/:project/terminal/ws", get(web_terminal::ws))
+        .route_with_tsr("/api/project/:owner/:project/git-credentials", get(get_git_credentials::get))
+        .route_with_tsr("/api/project/:owner/:project/regenerate-git-password", post(regenerate_git_password::post))
         .route_layer(middleware::from_fn(auth))
         .route_with_tsr("/api/project/:owner/:project/badge/status", get(generate_status_badge::get))
 }
