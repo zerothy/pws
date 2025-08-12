@@ -2,6 +2,7 @@ use std::{collections::HashMap, process::Stdio};
 
 use anyhow::Result;
 use serde_json;
+use uuid;
 use bollard::network::DisconnectNetworkOptions;
 use bollard::{
     container::{Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions},
@@ -162,10 +163,13 @@ pub async fn build_docker(
             let django_dockerfile = DjangoDockerfile::new().with_environment(environment_strings);
             let dockerfile_content = django_dockerfile.generate();
             
-            // Write Dockerfile to project directory
-            let dockerfile_path = std::path::Path::new(container_src).join("Dockerfile");
+            // Write Dockerfile to temporary file (don't pollute project directory)
+            // Add UUID for extra uniqueness to handle concurrent builds of same project
+            let temp_dir = std::env::temp_dir();
+            let build_uuid = uuid::Uuid::new_v4();
+            let dockerfile_path = temp_dir.join(format!("Dockerfile.{}.{}.tmp", container_name, build_uuid));
             std::fs::write(&dockerfile_path, dockerfile_content).map_err(|err| {
-                tracing::error!("Failed to write Dockerfile: {}", err);
+                tracing::error!("Failed to write temporary Dockerfile: {}", err);
                 err
             })?;
             
@@ -196,6 +200,13 @@ pub async fn build_docker(
                 tracing::error!("Failed to wait for docker build: {}", err);
                 err
             })?;
+
+            // Cleanup: Delete temporary Dockerfile
+            if let Err(err) = std::fs::remove_file(&dockerfile_path) {
+                tracing::warn!("Failed to cleanup temporary Dockerfile {:?}: {}", dockerfile_path, err);
+            } else {
+                tracing::debug!("Cleaned up temporary Dockerfile: {:?}", dockerfile_path);
+            }
 
             if !output.status.success() {
                 return Err(anyhow::anyhow!(String::from_utf8(output.stderr).unwrap()));
@@ -338,10 +349,12 @@ pub async fn build_docker(
     let config: Config<String> = Config {
         image: Some(image_name.clone()),
         env: Some(environment_strings),
-        // Auto-add Traefik labels for PWS deployed containers
+        // Auto-add Traefik labels for PWS deployed containers with HTTPS
         labels: Some(HashMap::from([
             ("traefik.enable".to_string(), "true".to_string()),
             (format!("traefik.http.routers.{}.rule", container_name), format!("Host(`{}.{}`)", container_name, get_env::domain())),
+            (format!("traefik.http.routers.{}.entrypoints", container_name), "websecure".to_string()),
+            (format!("traefik.http.routers.{}.tls.certresolver", container_name), "letsencrypt".to_string()),
             (format!("traefik.http.services.{}.loadbalancer.server.port", container_name), "80".to_string()),
         ])),
         host_config: Some(HostConfig {

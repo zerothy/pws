@@ -6,5 +6,4 @@ RUN pnpm install
 RUN pnpm build
 
 FROM prod as serve
-CMD ["pnpm", "serve", "--host", "0.0.0.0", "--no-open", "--port", "$PORT"]
-
+CMD ["pnpm", "serve", "--host", "0.0.0.0", "--no-open", "--port", "3001"]

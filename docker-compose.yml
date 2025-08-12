@@ -47,6 +47,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.pws.rule=Host(`${DOMAIN:-localhost}`) || Host(`www.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.pws.entrypoints=websecure"
+      - "traefik.http.routers.pws.tls.certresolver=letsencrypt"
       - "traefik.http.services.pws.loadbalancer.server.port=8080"
 
   # Skip monitoring stack for Windows (Optional)
@@ -88,12 +90,52 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
+
+  portainer:
+    container_name: portainer-pemasak
+    image: portainer/portainer-ce:latest
+    restart: always
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    networks:
+      - pemasak
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  docs-ui:
+    container_name: docs-ui-pemasak
+    build:
+      context: ./docs-ui
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    networks:
+      - pemasak
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.docs.rule=Host(`docs.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.docs.entrypoints=websecure"
+      - "traefik.http.routers.docs.tls.certresolver=letsencrypt"
+      - "traefik.http.services.docs.loadbalancer.server.port=3001"
 
   traefik:
     container_name: traefik-pemasak
     image: traefik:v3.3
+    env_file: .env
     # Enables the web UI and tells Traefik to listen to docker
     command: 
       - --api.insecure=true
@@ -102,18 +144,36 @@ services:
       - --tracing.otlp=true
       - --tracing.otlp.http=true
       - --tracing.otlp.http.endpoint=http://jaeger:4318/v1/
+      # Let's Encrypt configuration
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
     ports:
       - "80:80"
+      - "443:443"
       - "7070:8080"
     depends_on:
       server:
         condition: service_started
       grafana:
         condition: service_started
+      portainer:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-data:/letsencrypt
     networks:
       - pemasak
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
 
 volumes:
   db-data:
@@ -123,6 +183,8 @@ volumes:
   grafana-data:
     driver: local
   traefik-data:
+    driver: local
+  portainer-data:
     driver: local
 
 networks:
