@@ -49,6 +49,7 @@ export default function AuthProvider({
     initializing: true,
     handlers: {
       login: (_username: string, _password: string) => {},
+      loginWithSSO: (_ticket: string) => {},
       refreshAuthState: () => {},
     },
   });
@@ -89,7 +90,7 @@ export default function AuthProvider({
     );
   }
 
-  async function loginWithSSO(ticket: string, service_url: string) {
+  async function loginWithSSO(ticket: string) {
     const request = await fetch(
       `${import.meta.env.VITE_API_URL}/sso-callback`,
       {
@@ -108,20 +109,9 @@ export default function AuthProvider({
       throw data;
     }
 
-    const data = await request.json();
-
-    // Since backend isn't issuing a token yet, set auth directly
-    setAuth({
-      user: {
-        id: data.username,
-        username: data.username,
-        name: data.attributes?.displayName || data.username,
-        attributes: data.attributes || {},
-      },
-      authenticated: true,
-      initializing: false,
-    });
-
+    await refreshAuthState();
+    // I know this is terrible, I hate React, please make setState awaitable holy %@!#
+    // @ts-ignore
     setTimeout(
       () => navigate({ from: location.pathname, to: search?.redirect || "/" }),
       50,
@@ -178,7 +168,7 @@ export default function AuthProvider({
       !auth.authenticated &&
       !AUTH_ROUTES.some((route) => route === location.pathname)
     ) {
-      router.history.replace(`/web/login?redirect=${location.href}`);
+      router.history.replace(`/web/sso`);
     }
   }, [auth, location.pathname]);
 
