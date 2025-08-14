@@ -19,5 +19,5 @@ pub async fn router(_state: AppState, _config: &Settings) -> Router<AppState, Bo
             get(logout::logout_user).post(logout::logout_user),
         )
         .route_with_tsr("/api/validate", get(validate::validate_auth))
-        .route_with_tsr("/api/sso/callback", post(sso::handle_callback))
+        .route_with_tsr("/api/sso-callback", post(sso::handle_callback))
 }
