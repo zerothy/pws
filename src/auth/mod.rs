@@ -177,6 +177,14 @@ pub struct UserRequest {
     pub password: Secret<String>,
 }
 
+#[derive(Deserialize, Validate, Debug)]
+pub struct SsoCallbackRequest {
+    #[garde(length(min = 1))]
+    pub ticket: String,
+    #[garde(length(min = 1))]
+    pub service_url: String,
+}
+
 #[derive(Serialize, Debug)]
 enum RegisterUserErrorType {
     ValidationError,

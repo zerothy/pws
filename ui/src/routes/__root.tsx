@@ -1,23 +1,27 @@
-import AuthNavbar from '@/components/AuthNavbar'
-import NavSidebar from '@/components/NavSidebar'
-import AuthProvider from '@/contexts/AuthContext'
-import { createRootRoute, Outlet, useRouterState } from '@tanstack/react-router'
-import { Toaster } from 'react-hot-toast';
+import AuthNavbar from "@/components/AuthNavbar";
+import NavSidebar from "@/components/NavSidebar";
+import AuthProvider from "@/contexts/AuthContext";
+import {
+  createRootRoute,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
+import { Toaster } from "react-hot-toast";
 // import { TanStackRouterDevtools } from '@tanstack/router-devtools'
-import { useEffect } from 'react'
+import { useEffect } from "react";
 
 export const Route = createRootRoute({
   component: () => {
-    const routerState = useRouterState()
+    const routerState = useRouterState();
 
     useEffect(() => {
-      console.log(routerState.location)
-    }, [routerState.location])
+      console.log(routerState.location);
+    }, [routerState.location]);
 
-    const isAuthRoute = (
-      routerState.location.pathname === "/web/login"
-      || routerState.location.pathname === "/web/register"
-    )
+    const isAuthRoute =
+      routerState.location.pathname === "/web/login" ||
+      routerState.location.pathname === "/web/register" ||
+      routerState.location.pathname === "/web/sso";
 
     return (
       <AuthProvider>
@@ -37,6 +41,7 @@ export const Route = createRootRoute({
           {/* <TanStackRouterDevtools /> */}
         </div>
       </AuthProvider>
-    )
+    );
   },
-})
+});
+
