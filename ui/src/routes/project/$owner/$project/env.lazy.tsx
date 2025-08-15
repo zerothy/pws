@@ -1,8 +1,9 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { RawEnvEditor } from '@/components/RawEnvEditor'
 import { DialogClose } from '@radix-ui/react-dialog'
-import { Pencil1Icon, TrashIcon } from '@radix-ui/react-icons'
+import { Pencil1Icon, TrashIcon, CodeIcon } from '@radix-ui/react-icons'
 import { createLazyFileRoute, useParams } from '@tanstack/react-router'
 import React, { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
@@ -139,6 +140,11 @@ function ProjectDashboardEnv() {
   // @ts-ignore
   const { owner, project } = useParams({ strict: false })
   const { data, isLoading } = useSWR(`${import.meta.env.VITE_API_URL}/project/${owner}/${project}/env/`, apiFetcher)
+  const { mutate } = useSWRConfig()
+
+  const handleEnvUpdate = () => {
+    mutate(`${import.meta.env.VITE_API_URL}/project/${owner}/${project}/env/`)
+  }
 
   return (
     <div className="space-y-4 w-full">
@@ -147,11 +153,24 @@ function ProjectDashboardEnv() {
           <h1 className="text-xl font-semibold">Project Environment Variables</h1>
           <p className="text-sm">Set environment variables for your application here.</p>
         </div>
-        <ModifyEnvironDialog owner={owner} project={project}>
-          <Button size="lg" className="text-foreground">
-            New Environment Variable
-          </Button>
-        </ModifyEnvironDialog>
+        <div className="flex gap-2">
+          <RawEnvEditor 
+            owner={owner} 
+            project={project} 
+            environmentVars={data?.env ?? {}}
+            onUpdate={handleEnvUpdate}
+          >
+            <Button size="lg" variant="outline" className="text-foreground gap-2">
+              <CodeIcon className="w-4 h-4" />
+              Raw Editor
+            </Button>
+          </RawEnvEditor>
+          <ModifyEnvironDialog owner={owner} project={project}>
+            <Button size="lg" className="text-foreground">
+              New Environment Variable
+            </Button>
+          </ModifyEnvironDialog>
+        </div>
       </div>
 
       <div className="space-y-4">
