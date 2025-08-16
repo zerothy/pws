@@ -1,4 +1,3 @@
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Link, createLazyFileRoute } from '@tanstack/react-router';
 import useSWR from 'swr';
@@ -71,10 +70,6 @@ function Index() {
                     <h1 className="text-lg font-semibold">{item.owner_name}/{item.name}</h1>
                     <h2 className="text-sm text-blue-400">{item.id}</h2>
                   </div>
-
-                  <Badge className="bg-slate-700 hover:bg-slate-700 text-white rounded-full font-medium">
-                    Status: Empty
-                  </Badge>
                 </Link>
               ))}
             </div>

@@ -14,6 +14,7 @@ mod view_container_log;
 mod view_project_environ;
 mod update_project_environ;
 mod delete_project_environ;
+mod bulk_update_project_environ;
 mod generate_status_badge;
 mod get_git_credentials;
 mod regenerate_git_password;
@@ -24,6 +25,7 @@ pub async fn router(_state: AppState, _config: &Settings) -> Router<AppState, Bo
         .route_with_tsr("/api/project/:owner/:project/builds", get(project_dashboard::get))
         .route_with_tsr("/api/project/:owner/:project/logs", get(view_container_log::get))
         .route_with_tsr("/api/project/:owner/:project/env", get(view_project_environ::get).post(update_project_environ::post))
+        .route_with_tsr("/api/project/:owner/:project/env/bulk", post(bulk_update_project_environ::post))
         .route_with_tsr("/api/project/:owner/:project/env/delete", post(delete_project_environ::post))
         .route_with_tsr("/api/project/:owner/:project/builds/:build_id", get(view_build_log::get))
         .route_with_tsr("/api/project/:owner/:project/delete", post(delete_project::post))
